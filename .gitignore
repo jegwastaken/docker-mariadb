@@ -1,0 +1,5 @@
+.env
+data/
+backup/
+docker-compose.yml
+_backup.sh
