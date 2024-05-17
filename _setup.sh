@@ -1,63 +1,52 @@
 #!/bin/bash
 
+# exit if no .env file
+if [ ! -f .env ]; then
+  echo "No .env file found. Exiting..."
+  exit 1
+fi
+
+# shellcheck source=/dev/null
 . .env
 
 volumes=''
 network=''
-pma_absolute_uri="http://${PHPMYADMIN_DOMAIN}"
 mariadb_data_dir='./data'
 
-####################
 # Volumes
-####################
-if [ ! -z ${NAMED_VOLUME} ]
-then
-mariadb_data_dir=${NAMED_VOLUME}
-
-volumes="$(
-cat <<EOF
-
-
+if [ -n "${NAMED_VOLUME}" ]; then
+  mariadb_data_dir=${NAMED_VOLUME}
+  volumes="
 volumes:
   ${NAMED_VOLUME}:
-EOF
-)"
+"
 fi
-####################
 
-####################
 # Networks
-####################
-if [ ! -z ${NETWORKS_DEFAULT_EXTERNAL_NAME} ]
-then
-network="$(
-cat <<EOF
-
-
+if [ -n "${NETWORKS_DEFAULT_EXTERNAL_NAME}" ]; then
+  network="
 networks:
   default:
-    external:
-      name: ${NETWORKS_DEFAULT_EXTERNAL_NAME}
-EOF
-)"
+    name: ${NETWORKS_DEFAULT_EXTERNAL_NAME}
+    external: true
+"
 fi
-####################
 
-####################
-# Absolute URI
-####################
-if [ ${IS_HTTPS:-false} == true ]
-then
-pma_absolute_uri="https://${PHPMYADMIN_DOMAIN}"
+# Generate random password if not set
+if [ -z "${MYSQL_ROOT_PASSWORD}" ]; then
+  # Generate a random password
+  MYSQL_ROOT_PASSWORD=$(
+    tr -dc A-Za-z0-9 </dev/urandom | head -c 20
+    echo ''
+  )
+  echo "Generated MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}"
 fi
-####################
 
-cat > docker-compose.yml <<EOF
-version: '3.3'
-
+# Docker Compose file
+cat >docker-compose.yml <<EOF
 services:
   ${MARIADB_ID}:
-    image: mariadb:latest
+    image: mariadb:10
     restart: unless-stopped
     container_name: ${MARIADB_ID}
     volumes:
@@ -67,7 +56,7 @@ services:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_INITDB_SKIP_TZINFO: 1
   ${MARIADB_ID}_phpmyadmin:
-    image: phpmyadmin/phpmyadmin:latest
+    image: phpmyadmin/phpmyadmin:5
     restart: unless-stopped
     container_name: ${MARIADB_ID}_phpmyadmin
     volumes:
@@ -79,11 +68,20 @@ services:
       PMA_HOST: ${MARIADB_ID}:3306
       VIRTUAL_HOST: ${PHPMYADMIN_DOMAIN}
       LETSENCRYPT_HOST: ${PHPMYADMIN_DOMAIN}
-      PMA_ABSOLUTE_URI: ${pma_absolute_uri}${volumes}${network}
+${volumes}${network}
 EOF
 
-cat > _backup.sh <<EOF
+# Backup script
+cat >_backup.sh <<EOF
 #!/bin/bash
 
 docker exec -it ${MARIADB_ID} bash -c 'tar cvf /backup/data-\$(date "+%Y.%m.%d-%I.%M.%S").tar /var/lib/mysql'
+EOF
+
+# phpMyAdmin Config
+cat >php/config.user.inc.php <<EOF
+<?php
+\$cfg['AllowUserDropDatabase'] = true;
+\$cfg['Servers'][1]['hide_db'] = 'mysql|information_schema|performance_schema';
+\$cfg['MysqlSslWarningSafeHosts'] = ['${MARIADB_ID}:3306'];
 EOF

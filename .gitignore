@@ -3,3 +3,4 @@ data/
 backup/
 docker-compose.yml
 _backup.sh
+php/config.user.inc.php
